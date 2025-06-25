@@ -117,7 +117,6 @@ export function mcpProxy({ transportToClient, transportToServer }: { transportTo
   transportToServer.onmessage = (_message) => {
     // TODO: fix types
     const message = _message as any
-    log('[Remote→Local]', message.method || message.id)
 
     if (DEBUG) {
       debugLog('Remote → Local message', {
