@@ -1,5 +1,5 @@
 {
-  "name": "mcp-remote",
+  "name": "mcp-remote-aliyun",
   "version": "0.1.14",
   "description": "Remote proxy for Model Context Protocol, allowing local-only clients to connect to remote servers using oAuth",
   "keywords": [
@@ -10,7 +10,7 @@
     "oauth"
   ],
   "author": "Glen Maddern <glen@cloudflare.com>",
-  "repository": "https://github.com/geelen/mcp-remote",
+  "repository": "https://github.com/CodeSpaceiiii/mcp-remote-aliyun",
   "type": "module",
   "files": [
     "dist",
