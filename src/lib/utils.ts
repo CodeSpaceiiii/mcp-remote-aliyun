@@ -72,7 +72,9 @@ export function debugLog(message: string, ...args: any[]) {
 
 export function log(str: string, ...rest: unknown[]) {
   // Using stderr so that it doesn't interfere with stdout
-  console.error(`[${pid}] ${str}`, ...rest)
+  if (str.includes('Error:') || str.includes('error:')) {
+    console.error(`[${pid}] ${str}`, ...rest)
+  }
 
   // If debug mode is on, also log to debug file
   if (DEBUG && global.currentServerUrlHash) {
@@ -91,7 +93,6 @@ export function mcpProxy({ transportToClient, transportToServer }: { transportTo
   transportToClient.onmessage = (_message) => {
     // TODO: fix types
     const message = _message as any
-    log('[Local→Remote]', message.method || message.id)
 
     if (DEBUG) {
       debugLog('Local → Remote message', {
