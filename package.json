@@ -1,5 +1,5 @@
 {
-  "name": "mcp-remote-aliyun",
+  "name": "mcp-remote-alibaba-cloud",
   "version": "0.1.14",
   "description": "Remote proxy for Model Context Protocol, allowing local-only clients to connect to remote servers using oAuth",
   "keywords": [
@@ -19,8 +19,8 @@
   ],
   "main": "dist/proxy.js",
   "bin": {
-    "mcp-remote-aliyun": "dist/proxy.js",
-    "mcp-remote-aliyun-client": "dist/client.js"
+    "mcp-remote-alibaba-cloud": "dist/proxy.js",
+    "mcp-remote-alibaba-cloud-client": "dist/client.js"
   },
   "scripts": {
     "build": "tsup",
