@@ -1,5 +1,7 @@
 import { EventEmitter } from 'events'
 import { OAuthClientInformationFull, OAuthClientMetadata } from '@modelcontextprotocol/sdk/shared/auth.js'
+import type { AuthorizationServerMetadata } from './authorization-server-metadata'
+import type { ProtectedResourceMetadata } from './protected-resource-metadata'
 
 /**
  * Options for creating an OAuth client provider
@@ -27,6 +29,16 @@ export interface OAuthProviderOptions {
   staticOAuthClientMetadata?: StaticOAuthClientMetadata
   /** Static OAuth client information to use instead of OAuth registration */
   staticOAuthClientInfo?: StaticOAuthClientInformationFull
+  /** Resource parameter to send to the authorization server */
+  authorizeResource?: string
+  /** Pre-calculated server URL hash for cache isolation */
+  serverUrlHash: string
+  /** Authorization server metadata (optional, fetched if not provided) */
+  authorizationServerMetadata?: AuthorizationServerMetadata
+  /** Protected resource metadata (optional, discovered from 401 response) */
+  protectedResourceMetadata?: ProtectedResourceMetadata
+  /** Scope extracted from WWW-Authenticate header */
+  wwwAuthenticateScope?: string
 }
 
 /**
@@ -39,6 +51,8 @@ export interface OAuthCallbackServerOptions {
   path: string
   /** Event emitter to signal when auth code is received */
   events: EventEmitter
+  /** Timeout in milliseconds for the auth callback server's long poll */
+  authTimeoutMs?: number
 }
 
 // optional tatic OAuth client information

@@ -14,11 +14,12 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import {
   connectToRemoteServer,
   log,
+  debugLog,
   mcpProxy,
   parseCommandLineArgs,
   setupSignalHandlers,
-  getServerUrlHash,
   TransportStrategy,
+  discoverOAuthServerInfo,
 } from './lib/utils'
 import { StaticOAuthClientInformationFull, StaticOAuthClientMetadata } from './lib/types'
 import { NodeOAuthClientProvider } from './lib/node-oauth-client-provider'
@@ -35,24 +36,46 @@ async function runProxy(
   host: string,
   staticOAuthClientMetadata: StaticOAuthClientMetadata,
   staticOAuthClientInfo: StaticOAuthClientInformationFull,
+  authorizeResource: string,
+  ignoredTools: string[],
+  authTimeoutMs: number,
+  serverUrlHash: string,
 ) {
   // Set up event emitter for auth flow
   const events = new EventEmitter()
 
-  // Get the server URL hash for lockfile operations
-  const serverUrlHash = getServerUrlHash(serverUrl)
-
   // Create a lazy auth coordinator
-  const authCoordinator = createLazyAuthCoordinator(serverUrlHash, callbackPort, events)
+  const authCoordinator = createLazyAuthCoordinator(serverUrlHash, callbackPort, events, authTimeoutMs)
 
-  // Create the OAuth client provider
+  // Discover OAuth server info via Protected Resource Metadata (RFC 9728)
+  // This probes the MCP server for WWW-Authenticate header and fetches PRM
+  log('Discovering OAuth server configuration...')
+  const discoveryResult = await discoverOAuthServerInfo(serverUrl, headers)
+
+  if (discoveryResult.protectedResourceMetadata) {
+    log(`Discovered authorization server: ${discoveryResult.authorizationServerUrl}`)
+    if (discoveryResult.protectedResourceMetadata.scopes_supported) {
+      debugLog('Protected Resource Metadata scopes', {
+        scopes_supported: discoveryResult.protectedResourceMetadata.scopes_supported,
+      })
+    }
+  } else {
+    debugLog('No Protected Resource Metadata found, using server URL as authorization server')
+  }
+
+  // Create the OAuth client provider with discovered server info
   const authProvider = new NodeOAuthClientProvider({
-    serverUrl,
+    serverUrl: discoveryResult.authorizationServerUrl,
     callbackPort,
     host,
     clientName: 'MCP CLI Proxy',
     staticOAuthClientMetadata,
     staticOAuthClientInfo,
+    authorizeResource,
+    serverUrlHash,
+    authorizationServerMetadata: discoveryResult.authorizationServerMetadata,
+    protectedResourceMetadata: discoveryResult.protectedResourceMetadata,
+    wwwAuthenticateScope: discoveryResult.wwwAuthenticateScope,
   })
 
   // Create the STDIO transport for local connections
@@ -90,6 +113,7 @@ async function runProxy(
     mcpProxy({
       transportToClient: localTransport,
       transportToServer: remoteTransport,
+      ignoredTools,
     })
 
     // Start the local STDIO server
@@ -142,9 +166,36 @@ to the CA certificate file. If using claude_desktop_config.json, this might look
 
 // Parse command-line arguments and run the proxy
 parseCommandLineArgs(process.argv.slice(2), 'Usage: npx tsx proxy.ts <https://server-url> [callback-port] [--debug]')
-  .then(({ serverUrl, callbackPort, headers, transportStrategy, host, debug, staticOAuthClientMetadata, staticOAuthClientInfo }) => {
-    return runProxy(serverUrl, callbackPort, headers, transportStrategy, host, staticOAuthClientMetadata, staticOAuthClientInfo)
-  })
+  .then(
+    ({
+      serverUrl,
+      callbackPort,
+      headers,
+      transportStrategy,
+      host,
+      debug,
+      staticOAuthClientMetadata,
+      staticOAuthClientInfo,
+      authorizeResource,
+      ignoredTools,
+      authTimeoutMs,
+      serverUrlHash,
+    }) => {
+      return runProxy(
+        serverUrl,
+        callbackPort,
+        headers,
+        transportStrategy,
+        host,
+        staticOAuthClientMetadata,
+        staticOAuthClientInfo,
+        authorizeResource,
+        ignoredTools,
+        authTimeoutMs,
+        serverUrlHash,
+      )
+    },
+  )
   .catch((error) => {
     log('Fatal error:', error)
     process.exit(1)
