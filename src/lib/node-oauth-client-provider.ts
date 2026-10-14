@@ -16,11 +16,12 @@ import {
 } from '@modelcontextprotocol/client'
 import type {
   OAuthClientInformation,
+  OAuthClientInformationContext,
   OAuthClientInformationFull,
-  OAuthClientInformationMixed,
   OAuthClientProvider,
   OAuthDiscoveryState,
   OAuthTokens,
+  StoredOAuthClientInformation,
 } from '@modelcontextprotocol/client'
 import { type OAuthProviderOptions, type StaticOAuthClientInformationFull, type StaticOAuthClientMetadata } from './types'
 import {
@@ -268,6 +269,8 @@ export class NodeOAuthClientProvider implements OAuthClientProvider {
   private _state: string
   private _clientInfo: OAuthClientInformationFull | undefined
   private clientRegistrationSource: ClientRegistrationSource
+  /** So {@link forgetSavedStaticClient} searches the store once, not on every read. */
+  private checkedForSavedStaticClient = false
   private incomingState: string | undefined
   private authorizationServerMetadata: AuthorizationServerMetadata | undefined
   private protectedResourceMetadata: ProtectedResourceMetadata | undefined
@@ -655,15 +658,20 @@ export class NodeOAuthClientProvider implements OAuthClientProvider {
 
   /**
    * Gets the client information if it exists
+   * @param ctx The authorization server the SDK resolved, when it is the SDK asking
    * @returns The client information or undefined
    */
-  async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
+  async clientInformation(ctx?: OAuthClientInformationContext): Promise<StoredOAuthClientInformation | undefined> {
     debugLog('Reading client info')
     if (this.staticOAuthClientInfo) {
       debugLog('Returning static client info')
       this._clientInfo = this.staticOAuthClientInfo
       this.clientRegistrationSource = 'static'
-      return this.staticOAuthClientInfo
+      await this.forgetSavedStaticClient()
+      // Vouched for by whoever configured it rather than by an authorization server, so it carries
+      // whichever issuer the SDK resolved. Unstamped, the SDK warns on every sign-in (SEP-2352) and
+      // hands it to saveClientInformation to stamp.
+      return ctx ? { ...this.staticOAuthClientInfo, issuer: ctx.issuer } : this.staticOAuthClientInfo
     }
 
     const clientIdMetadataDocument = await this.clientIdMetadataDocument()
@@ -718,6 +726,28 @@ export class NodeOAuthClientProvider implements OAuthClientProvider {
   }
 
   /**
+   * Removes the copy of the static client that versions before this one saved to client_info.json.
+   *
+   * They let the SDK's issuer stamp through to {@link saveClientInformation}, which wrote the static
+   * client - secret and all - into the store. Only that copy goes: a registration of any other
+   * client is what a run without the flag goes back to.
+   */
+  private async forgetSavedStaticClient(): Promise<void> {
+    if (this.checkedForSavedStaticClient) return
+    this.checkedForSavedStaticClient = true
+
+    const saved = await readJsonFile<OAuthClientInformation>(
+      this.serverUrlHash,
+      'client_info.json',
+      z.looseObject({ client_id: z.string() }),
+    )
+    if (saved && saved.client_id === this.staticOAuthClientInfo?.client_id) {
+      debugLog('Removing the copy of the static client an earlier version saved')
+      await deleteConfigFile(this.serverUrlHash, 'client_info.json')
+    }
+  }
+
+  /**
    * Saves client information
    * @param clientInformation The client information to save
    */
@@ -730,6 +760,14 @@ export class NodeOAuthClientProvider implements OAuthClientProvider {
     if (this.clientMetadataUrl && clientInformation.client_id === this.clientMetadataUrl) {
       debugLog('Not caching a client id that came from a client metadata document')
       this.clientRegistrationSource = 'client-id-metadata-document'
+      return
+    }
+
+    // Nor is a client pinned with --static-oauth-client-info, which is read from the command line
+    // on every run as well. A copy would only put its secret in the store, for a run without the
+    // flag to mistake for a registration of its own.
+    if (this.staticOAuthClientInfo) {
+      debugLog('Not caching the static client')
       return
     }
 
