@@ -165,6 +165,11 @@ async function runProxy(
       protocolMode,
     )
 
+    // Connected, so any sign-in this instance owned is finished; let a later one bind the port.
+    // Not inside the connect: its post-auth reconnect still reads the coordination verdict.
+    await authCoordinator.release()
+    server = null
+
     // Set up bidirectional proxy between local and remote transports
     mcpProxy({
       transportToClient: localTransport,
@@ -204,6 +209,10 @@ async function runProxy(
         // them up. Waiting for a code of our own here would wait for one nobody will deliver.
         if (skipBrowserAuth) {
           log('Another instance is completing the sign-in; retrying with the tokens it writes')
+          // That sign-in is over too. Cached, this verdict would answer every later 401 with "another
+          // instance is on it" - long after that instance has finished, or gone
+          await authCoordinator.release()
+          server = null
           return
         }
 
@@ -217,6 +226,8 @@ async function runProxy(
         }
         await remoteTransport.finishAuth(code, iss)
         log('Re-authorized with the remote server')
+        await authCoordinator.release()
+        server = null
       },
     })
 
