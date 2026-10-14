@@ -56,6 +56,7 @@ export function createLazyAuthCoordinator(
   events: EventEmitter,
   authTimeoutMs: number,
   strictPort = false,
+  authSuccessUrl?: string,
 ): AuthCoordinator {
   // The in-flight promise is what gets shared, not the resolved value. Guarding on the result
   // only rules out sequential re-entry: two 401s landing in the same tick would both find it
@@ -112,6 +113,7 @@ export function createLazyAuthCoordinator(
         authTimeoutMs,
         strictPort,
         refreshed ? REFRESH_FOLLOWER_PATIENCE_MS : undefined,
+        authSuccessUrl,
       )
       try {
         const resolved = await authState
@@ -238,6 +240,7 @@ export async function coordinateAuth(
   authTimeoutMs: number,
   strictPort = false,
   followerPatienceMs = FOLLOWER_PATIENCE_MS,
+  authSuccessUrl?: string,
 ): Promise<{ server: Server; actualPort: number; waitForAuthCode: () => Promise<AuthCodeResult>; skipBrowserAuth: boolean }> {
   debugLog('Coordinating authentication', { serverUrlHash, callbackPath, callbackPort })
 
@@ -253,6 +256,7 @@ export async function coordinateAuth(
         events,
         authTimeoutMs,
         serverUrlHash,
+        authSuccessUrl,
       })
 
       // Binding is only a mutex between instances contending for the *same* port. Instances that
@@ -263,7 +267,7 @@ export async function coordinateAuth(
       if (established !== undefined) {
         debugLog('Yielding to a sibling established on an earlier candidate', { ours: actualPort, theirs: established })
         await new Promise<void>((resolve) => server.close(() => resolve()))
-        return followUntilTokensOrPort(serverUrlHash, callbackPath, established, events, authTimeoutMs, followerPatienceMs)
+        return followUntilTokensOrPort(serverUrlHash, callbackPath, established, events, authTimeoutMs, followerPatienceMs, authSuccessUrl)
       }
 
       log(`This instance is running the sign-in for this server (callback port ${actualPort})`)
@@ -281,7 +285,7 @@ export async function coordinateAuth(
 
       if (await portHeldBySiblingFor(port, serverUrlHash)) {
         log(`Another instance is running the sign-in for this server on port ${port}`)
-        return followUntilTokensOrPort(serverUrlHash, callbackPath, port, events, authTimeoutMs, followerPatienceMs)
+        return followUntilTokensOrPort(serverUrlHash, callbackPath, port, events, authTimeoutMs, followerPatienceMs, authSuccessUrl)
       }
 
       // Somebody else's process. Ours is not there to be waited for, so keep looking.
@@ -325,6 +329,7 @@ async function followUntilTokensOrPort(
   events: EventEmitter,
   authTimeoutMs: number,
   followerPatienceMs: number,
+  authSuccessUrl?: string,
 ): Promise<{ server: Server; actualPort: number; waitForAuthCode: () => Promise<AuthCodeResult>; skipBrowserAuth: boolean }> {
   // The person at the browser may be going through SSO, MFA or a password manager, so this is
   // deliberately longer than the handoff window.
@@ -345,6 +350,7 @@ async function followUntilTokensOrPort(
         events,
         authTimeoutMs,
         serverUrlHash,
+        authSuccessUrl,
       })
       // The port came free, so the instance that had it is gone. Whatever tab it opened points
       // here, so its sign-in can still complete against this process.
