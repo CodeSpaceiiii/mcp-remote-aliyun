@@ -198,6 +198,117 @@ describe('NodeOAuthClientProvider - OAuth Scope Handling', () => {
       expect(requests.filter((request) => request.startsWith('GET https://example.com/authorize?'))).toHaveLength(1)
     })
 
+    it('opens the browser for the new registration after the stale one is cleared', async () => {
+      const { default: open } = await import('open')
+      const openedUrls: string[] = []
+      vi.mocked(open).mockImplementation(async (url: string) => {
+        openedUrls.push(url)
+        return {} as any
+      })
+      vi.mocked(mcpAuthConfig.writeTextFile).mockResolvedValue(undefined)
+      provider = new NodeOAuthClientProvider(defaultOptions)
+      // The persisted discovery state is read first inside auth()
+      mockReadJsonFile.mockResolvedValueOnce(undefined)
+      mockReadJsonFile.mockResolvedValueOnce({
+        client_id: 'stale-client',
+        redirect_uris: ['http://localhost:8080/oauth/callback'],
+      })
+      const fetchFn = vi.fn(async (input: string | URL | Request) => {
+        const url = input.toString()
+
+        if (url === 'https://example.com/.well-known/oauth-protected-resource') {
+          return new Response(null, { status: 404 })
+        }
+        if (url === 'https://example.com/.well-known/oauth-authorization-server') {
+          return Response.json({
+            issuer: 'https://example.com',
+            authorization_endpoint: 'https://example.com/authorize',
+            token_endpoint: 'https://example.com/token',
+            registration_endpoint: 'https://example.com/register',
+            response_types_supported: ['code'],
+          })
+        }
+        if (url === 'https://example.com/register') {
+          return Response.json(
+            {
+              client_id: 'fresh-client',
+              redirect_uris: ['http://localhost:8080/oauth/callback'],
+            },
+            { status: 201 },
+          )
+        }
+        if (url.startsWith('https://example.com/authorize?')) {
+          return Response.json({ error: 'invalid_client' }, { status: 400 })
+        }
+
+        throw new Error(`Unexpected request: ${url}`)
+      })
+      vi.stubGlobal('fetch', fetchFn)
+
+      await auth(provider, { serverUrl: new URL(defaultOptions.serverUrl), fetchFn })
+
+      // The retry is a new sign-in for a new client. The stale client's flow must not suppress it,
+      // and the verifier on disk must be the one the browser's challenge was made from.
+      expect(openedUrls).toHaveLength(1)
+      const opened = new URL(openedUrls[0])
+      expect(opened.searchParams.get('client_id')).toBe('fresh-client')
+      const savedVerifier = vi.mocked(mcpAuthConfig.writeTextFile).mock.calls.at(-1)?.[2]
+      expect(opened.searchParams.get('code_challenge')).toBe(createHash('sha256').update(savedVerifier!).digest('base64url'))
+    })
+
+    it('reports a client the token endpoint refuses as refused, not as a changed authorization server', async () => {
+      // A store that remembers, since the SDK's retry of the exchange reads back what the redirect leg saved
+      const files = new Map<string, unknown>()
+      mockReadJsonFile.mockImplementation(async (_hash: string, file: string) => files.get(file))
+      mockWriteJsonFile.mockImplementation(async (_hash: string, file: string, data: unknown) => void files.set(file, data))
+      mockDeleteConfigFile.mockImplementation(async (_hash: string, file: string) => void files.delete(file))
+      const { default: open } = await import('open')
+      const openedUrls: string[] = []
+      vi.mocked(open).mockImplementation(async (url: string) => {
+        openedUrls.push(url)
+        return {} as any
+      })
+      provider = new NodeOAuthClientProvider({
+        ...defaultOptions,
+        staticOAuthClientInfo: {
+          client_id: 'static-client',
+          client_secret: 'wrong-secret',
+          redirect_uris: ['http://localhost:8080/oauth/callback'],
+        },
+      })
+      const fetchFn = vi.fn(async (input: string | URL | Request) => {
+        const url = input.toString()
+
+        if (url === 'https://example.com/.well-known/oauth-protected-resource') {
+          return new Response(null, { status: 404 })
+        }
+        if (url === 'https://example.com/.well-known/oauth-authorization-server') {
+          return Response.json({
+            issuer: 'https://example.com',
+            authorization_endpoint: 'https://example.com/authorize',
+            token_endpoint: 'https://example.com/token',
+            response_types_supported: ['code'],
+          })
+        }
+        if (url === 'https://example.com/token') {
+          return Response.json({ error: 'invalid_client' }, { status: 401 })
+        }
+
+        throw new Error(`Unexpected request: ${url}`)
+      })
+      vi.stubGlobal('fetch', fetchFn)
+      const serverUrl = new URL(defaultOptions.serverUrl)
+
+      await auth(provider, { serverUrl, fetchFn })
+      provider.useAuthorizationState(new URL(openedUrls[0]).searchParams.get('state')!)
+
+      // The SDK drops the client on this leg too, then retries the exchange with the same flow
+      await expect(auth(provider, { serverUrl, authorizationCode: 'code', fetchFn })).rejects.toMatchObject({
+        constructor: OAuthError,
+        code: 'invalid_client',
+      })
+    })
+
     it('does not infer a stale registration from error_description text', async () => {
       provider = new NodeOAuthClientProvider(defaultOptions)
       mockReadJsonFile.mockResolvedValueOnce({
