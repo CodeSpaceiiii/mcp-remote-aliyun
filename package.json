@@ -16,9 +16,9 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "SECURITY.md"
   ],
-  "main": "dist/proxy.js",
   "bin": {
     "mcp-remote-alibaba-cloud": "dist/proxy.js",
     "mcp-remote-alibaba-cloud-client": "dist/client.js"
@@ -26,10 +26,26 @@
   "scripts": {
     "build": "tsup",
     "build:watch": "tsup --watch",
-    "check": "prettier --check . && tsc",
-    "lint-fix": "prettier --check . --write",
-    "test:unit": "vitest run",
-    "test:unit:watch": "vitest"
+    "dev:client": "tsx src/client.ts",
+    "dev:proxy": "tsx src/proxy.ts",
+    "format": "oxfmt .",
+    "knip": "knip",
+    "lint": "oxfmt --check . && oxlint --deny-warnings && tsc && tsc -p test --noEmit",
+    "prepack": "tsup",
+    "prepare": "husky",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "release": {
+    "branches": [
+      "main"
+    ],
+    "plugins": [
+      "@semantic-release/commit-analyzer",
+      "@semantic-release/release-notes-generator",
+      "@semantic-release/npm",
+      "@semantic-release/github"
+    ]
   },
   "dependencies": {
     "express": "^4.21.2",
@@ -38,15 +54,21 @@
     "undici": "^7.12.0"
   },
   "devDependencies": {
-    "@modelcontextprotocol/sdk": "^1.25.3",
-    "zod": "^4.0.0",
+    "@modelcontextprotocol/client": "^2.3.0",
+    "@modelcontextprotocol/core": "^2.3.0",
+    "@modelcontextprotocol/server": "^2.3.0",
     "@types/express": "^5.0.0",
     "@types/node": "^22.13.10",
-    "prettier": "^3.5.3",
+    "husky": "9.1.7",
+    "knip": "6.32.3",
+    "oxfmt": "0.65.0",
+    "oxlint": "1.80.0",
+    "semantic-release": "^25.0.2",
     "tsup": "^8.4.0",
     "tsx": "^4.19.3",
     "typescript": "^5.8.2",
-    "vitest": "^3.2.3"
+    "vitest": "^3.2.3",
+    "zod": "^4.2.0"
   },
   "tsup": {
     "entry": [
