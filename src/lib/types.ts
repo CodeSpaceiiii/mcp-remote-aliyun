@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events'
-import { OAuthClientInformationFull, OAuthClientMetadata } from '@modelcontextprotocol/sdk/shared/auth.js'
+import type { FetchLike, OAuthClientInformationFull, OAuthClientMetadata } from '@modelcontextprotocol/client'
 import type { AuthorizationServerMetadata } from './authorization-server-metadata'
 import type { ProtectedResourceMetadata } from './protected-resource-metadata'
 
@@ -9,6 +9,8 @@ import type { ProtectedResourceMetadata } from './protected-resource-metadata'
 export interface OAuthProviderOptions {
   /** Server URL to connect to */
   serverUrl: string
+  /** The actual MCP server URL, for the RFC 8707 resource indicator. Defaults to `serverUrl`, which is the authorization server once discovery has run. */
+  resourceServerUrl?: string
   /** Port for the OAuth callback server */
   callbackPort: number
   /** Desired hostname for the OAuth callback server */
@@ -29,8 +31,27 @@ export interface OAuthProviderOptions {
   staticOAuthClientMetadata?: StaticOAuthClientMetadata
   /** Static OAuth client information to use instead of OAuth registration */
   staticOAuthClientInfo?: StaticOAuthClientInformationFull
+  /** URL of a Client ID Metadata Document (SEP-991), used as the client_id instead of registering */
+  clientMetadataUrl?: string
+  /** Present the OIDC ID token as the Bearer credential instead of the access token */
+  useIdToken?: boolean
+  /** Sign in with the OAuth device grant (RFC 8628) rather than a browser on this machine */
+  useDeviceCode?: boolean
+  /** Sign in as the software itself with the RFC 6749 `client_credentials` grant */
+  useClientCredentials?: boolean
+  /** Explicit client_credentials token endpoint; bypasses OAuth discovery throughout authentication. */
+  tokenEndpoint?: string
+  /**
+   * The fetch the transports hand the SDK for authorization requests, `--header` values included.
+   * A token renewal the provider starts itself goes through it too, so it matches a 401 retry.
+   */
+  fetchFn?: FetchLike
   /** Resource parameter to send to the authorization server */
   authorizeResource?: string
+  /** Omit the RFC 8707 resource parameter entirely (some servers reject it, e.g. Entra ID v2) */
+  skipResourceParameter?: boolean
+  /** Extra query parameters to add to the authorization URL, for servers that require their own */
+  authorizeParams?: Record<string, string>
   /** Pre-calculated server URL hash for cache isolation */
   serverUrlHash: string
   /** Authorization server metadata (optional, fetched if not provided) */
@@ -53,6 +74,33 @@ export interface OAuthCallbackServerOptions {
   events: EventEmitter
   /** Timeout in milliseconds for the auth callback server's long poll */
   authTimeoutMs?: number
+  /** Optional browser destination after the authorization code has been exchanged successfully. */
+  authSuccessUrl?: string
+  /** Identifies which server this callback server belongs to, for the identity probe */
+  serverUrlHash: string
+}
+
+/** An authorization code, with the state identifying the flow it belongs to. */
+export type AuthCodeResult = {
+  code: string
+  state?: string
+  /**
+   * The `iss` query parameter from the authorization callback (RFC 9207), if the
+   * authorization server sent one. Must reach `finishAuth` unchanged: when the
+   * server advertises `authorization_response_iss_parameter_supported: true`,
+   * the SDK client rejects a missing `iss` as a mix-up-attack indicator.
+   */
+  iss?: string
+  /** Completes this code's browser response after the token exchange succeeds or fails. */
+  completeAuthorization?: (success: boolean) => void
+}
+
+/*
+ * How often, if ever, to ping the remote server so an idle connection is not reaped
+ */
+export interface KeepAliveConfig {
+  enabled: boolean
+  intervalMs: number
 }
 
 // optional tatic OAuth client information

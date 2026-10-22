@@ -10,8 +10,8 @@
  */
 
 import { EventEmitter } from 'events'
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { ListResourcesResultSchema, ListToolsResultSchema } from '@modelcontextprotocol/sdk/types.js'
+import { configureNetworkPolicy } from './lib/network-policy'
+import { Client } from '@modelcontextprotocol/client'
 import { NodeOAuthClientProvider } from './lib/node-oauth-client-provider'
 import {
   parseCommandLineArgs,
@@ -20,36 +20,63 @@ import {
   debugLog,
   MCP_REMOTE_VERSION,
   connectToRemoteServer,
+  createResourceFetch,
   TransportStrategy,
   discoverOAuthServerInfo,
 } from './lib/utils'
 import { StaticOAuthClientInformationFull, StaticOAuthClientMetadata } from './lib/types'
-import { createLazyAuthCoordinator } from './lib/coordination'
+import { createLazyAuthCoordinator, hasUsableTokens, serverIssuesAuthChallenge } from './lib/coordination'
+import { attachClientDiagnostics } from './lib/client-diagnostics'
 
 /**
  * Main function to run the client
  */
 async function runClient(
   serverUrl: string,
+  callbackPath: string,
   callbackPort: number,
+  specifiedPort: number | undefined,
   headers: Record<string, string>,
   transportStrategy: TransportStrategy = 'http-first',
   host: string,
   staticOAuthClientMetadata: StaticOAuthClientMetadata,
   staticOAuthClientInfo: StaticOAuthClientInformationFull,
+  clientMetadataUrl: string | undefined,
+  useIdToken: boolean,
+  useDeviceCode: boolean,
+  useClientCredentials: boolean,
+  tokenEndpoint: string | undefined,
+  authorizeResource: string | undefined,
+  skipResourceParameter: boolean,
+  authorizeParams: Record<string, string>,
   authTimeoutMs: number,
   serverUrlHash: string,
+  authSuccessUrl?: string,
 ) {
+  configureNetworkPolicy(serverUrl, tokenEndpoint)
+
   // Set up event emitter for auth flow
   const events = new EventEmitter()
 
+  // A redirect_uri pinned outside this process - by a static registration, or by the redirect_uris
+  // in a client metadata document - stops being valid the moment we wander onto another port.
+  const strictPort = !!specifiedPort || !!staticOAuthClientInfo || !!clientMetadataUrl
+
   // Create a lazy auth coordinator
-  const authCoordinator = createLazyAuthCoordinator(serverUrlHash, callbackPort, events, authTimeoutMs)
+  const authCoordinator = createLazyAuthCoordinator(
+    serverUrlHash,
+    callbackPath,
+    callbackPort,
+    events,
+    authTimeoutMs,
+    strictPort,
+    authSuccessUrl,
+  )
 
   // Discover OAuth server info via Protected Resource Metadata (RFC 9728)
   // This probes the MCP server for WWW-Authenticate header and fetches PRM
   log('Discovering OAuth server configuration...')
-  const discoveryResult = await discoverOAuthServerInfo(serverUrl, headers)
+  const discoveryResult = await discoverOAuthServerInfo(serverUrl, headers, tokenEndpoint)
 
   if (discoveryResult.protectedResourceMetadata) {
     log(`Discovered authorization server: ${discoveryResult.authorizationServerUrl}`)
@@ -65,11 +92,22 @@ async function runClient(
   // Create the OAuth client provider with discovered server info
   const authProvider = new NodeOAuthClientProvider({
     serverUrl: discoveryResult.authorizationServerUrl,
+    resourceServerUrl: serverUrl,
+    callbackPath,
     callbackPort,
     host,
     clientName: 'MCP CLI Client',
     staticOAuthClientMetadata,
     staticOAuthClientInfo,
+    clientMetadataUrl,
+    useIdToken,
+    useDeviceCode,
+    useClientCredentials,
+    tokenEndpoint,
+    fetchFn: createResourceFetch(serverUrl, headers),
+    authorizeResource,
+    skipResourceParameter,
+    authorizeParams,
     serverUrlHash,
     authorizationServerMetadata: discoveryResult.authorizationServerMetadata,
     protectedResourceMetadata: discoveryResult.protectedResourceMetadata,
@@ -91,18 +129,19 @@ async function runClient(
   let server: any = null
 
   // Define an auth initializer function
-  const authInitializer = async () => {
-    const authState = await authCoordinator.initializeAuth()
+  const authInitializer = async (options?: { forceRefresh?: boolean }) => {
+    const authState = await authCoordinator.initializeAuth(options)
 
     // Store server in outer scope for cleanup
     server = authState.server
 
-    // If auth was completed by another instance, just log that we'll use the auth from disk
-    if (authState.skipBrowserAuth) {
-      log('Authentication was completed by another instance - will use tokens from disk...')
-      // TODO: remove, the callback is happening before the tokens are exchanged
-      //  so we're slightly too early
-      await new Promise((res) => setTimeout(res, 1_000))
+    // A stranger on an earlier candidate can push us onto a later port than the one the startup
+    // check compared the cached registration against, so a stale registration can still name the
+    // wrong redirect_uri here. Invalidating unconditionally is not the answer - this runs again on
+    // the post-auth reconnect, and deleting the registration then breaks the code exchange.
+    if (authState.actualPort !== callbackPort) {
+      log(`Using callback port ${authState.actualPort}`)
+      authProvider.setCallbackPort(authState.actualPort)
     }
 
     return {
@@ -111,23 +150,22 @@ async function runClient(
     }
   }
 
+  // Ownership is settled before the first connection attempt, not after a 401. The SDK builds the
+  // authorize URL and registers a client from inside `transport.start()`, so an instance that only
+  // discovered it was a follower afterwards would already have registered its own client and
+  // issued its own PKCE challenge - which is what produced one registration and one tab per
+  // instance. Skipped when tokens are already on disk, so a warm start still binds nothing - and
+  // skipped entirely under the device grant, which has no callback port to contend over.
+  if (!useDeviceCode && !(await hasUsableTokens(serverUrlHash)) && (await serverIssuesAuthChallenge(serverUrl, headers))) {
+    await authInitializer()
+  }
+
   try {
     // Connect to remote server with lazy authentication
     const transport = await connectToRemoteServer(client, serverUrl, authProvider, headers, authInitializer, transportStrategy)
 
-    // Set up message and error handlers
-    transport.onmessage = (message) => {
-      log('Received message:', JSON.stringify(message, null, 2))
-    }
-
-    transport.onerror = (error) => {
-      log('Transport error:', error)
-    }
-
-    transport.onclose = () => {
-      log('Connection closed.')
-      process.exit(0)
-    }
+    // Log what arrives without displacing the dispatcher client.connect() installed
+    attachClientDiagnostics(client, transport, () => process.exit(0))
 
     // Set up cleanup handler
     const cleanup = async () => {
@@ -145,7 +183,7 @@ async function runClient(
     try {
       // Request tools list
       log('Requesting tools list...')
-      const tools = await client.request({ method: 'tools/list' }, ListToolsResultSchema)
+      const tools = await client.request({ method: 'tools/list' })
       log('Tools:', JSON.stringify(tools, null, 2))
     } catch (e) {
       log('Error requesting tools list:', e)
@@ -154,7 +192,7 @@ async function runClient(
     try {
       // Request resources list
       log('Requesting resource list...')
-      const resources = await client.request({ method: 'resources/list' }, ListResourcesResultSchema)
+      const resources = await client.request({ method: 'resources/list' })
       log('Resources:', JSON.stringify(resources, null, 2))
     } catch (e) {
       log('Error requesting resources list:', e)
@@ -178,29 +216,51 @@ async function runClient(
 }
 
 // Parse command-line arguments and run the client
-parseCommandLineArgs(process.argv.slice(2), 'Usage: npx tsx client.ts <https://server-url> [callback-port] [--debug]')
+parseCommandLineArgs(process.argv.slice(2), 'Usage: mcp-remote-client <https://server-url> [callback-port] [--debug]')
   .then(
     ({
       serverUrl,
+      callbackPath,
       callbackPort,
+      specifiedPort,
       headers,
       transportStrategy,
       host,
       staticOAuthClientMetadata,
       staticOAuthClientInfo,
+      clientMetadataUrl,
+      useIdToken,
+      useDeviceCode,
+      useClientCredentials,
+      tokenEndpoint,
+      authorizeResource,
+      skipResourceParameter,
+      authorizeParams,
       authTimeoutMs,
       serverUrlHash,
+      authSuccessUrl,
     }) => {
       return runClient(
         serverUrl,
+        callbackPath,
         callbackPort,
+        specifiedPort,
         headers,
         transportStrategy,
         host,
         staticOAuthClientMetadata,
         staticOAuthClientInfo,
+        clientMetadataUrl,
+        useIdToken,
+        useDeviceCode,
+        useClientCredentials,
+        tokenEndpoint,
+        authorizeResource,
+        skipResourceParameter,
+        authorizeParams,
         authTimeoutMs,
         serverUrlHash,
+        authSuccessUrl,
       )
     },
   )
