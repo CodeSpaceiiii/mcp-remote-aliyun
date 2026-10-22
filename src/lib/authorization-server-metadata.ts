@@ -1,3 +1,4 @@
+import { guardedFetch, assertAuthorizationMetadata } from './network-policy'
 import { debugLog } from './utils'
 
 /**
@@ -99,7 +100,7 @@ export async function fetchAuthorizationServerMetadata(serverUrl: string): Promi
  */
 async function fetchMetadataFrom(metadataUrl: string): Promise<AuthorizationServerMetadata | undefined> {
   try {
-    const response = await fetch(metadataUrl, {
+    const response = await guardedFetch(metadataUrl, {
       headers: {
         Accept: 'application/json',
         'Accept-Encoding': 'identity',
@@ -121,6 +122,7 @@ async function fetchMetadataFrom(metadataUrl: string): Promise<AuthorizationServ
     }
 
     const metadata = (await response.json()) as AuthorizationServerMetadata
+    assertAuthorizationMetadata(metadata)
 
     debugLog('Successfully fetched authorization server metadata', {
       issuer: metadata.issuer,

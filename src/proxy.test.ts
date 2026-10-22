@@ -52,7 +52,7 @@ vi.mock('./lib/utils', () => ({
     mocked.reauthorize = options.reauthorize
   }),
   setupSignalHandlers: vi.fn(),
-  fetchWithMcpHeaders: vi.fn(),
+  createResourceFetch: vi.fn(() => vi.fn()),
   forgetRejectedAuthorization: vi.fn(),
   debugLog: vi.fn(),
   log: vi.fn(),

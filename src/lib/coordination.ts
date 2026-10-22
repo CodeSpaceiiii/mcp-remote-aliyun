@@ -1,3 +1,4 @@
+import { guardedFetch } from './network-policy'
 import { readJsonFile } from './mcp-auth-config'
 import { OAuthTokensWithExpiresAtSchema } from './node-oauth-client-provider'
 import { AuthCodeResult } from './types'
@@ -183,7 +184,7 @@ async function portHeldBySiblingFor(port: number, serverUrlHash: string): Promis
  */
 export async function serverIssuesAuthChallenge(serverUrl: string, headers: Record<string, string> = {}): Promise<boolean> {
   try {
-    const response = await fetch(serverUrl, {
+    const response = await guardedFetch(serverUrl, {
       method: 'GET',
       headers: { ...headers, accept: 'application/json, text/event-stream' },
       signal: AbortSignal.timeout(5000),

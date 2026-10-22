@@ -10,7 +10,8 @@
  */
 
 import { EventEmitter } from 'events'
-import { Client, createFetchWithInit } from '@modelcontextprotocol/client'
+import { configureNetworkPolicy } from './lib/network-policy'
+import { Client } from '@modelcontextprotocol/client'
 import { NodeOAuthClientProvider } from './lib/node-oauth-client-provider'
 import {
   parseCommandLineArgs,
@@ -19,7 +20,7 @@ import {
   debugLog,
   MCP_REMOTE_VERSION,
   connectToRemoteServer,
-  fetchWithMcpHeaders,
+  createResourceFetch,
   TransportStrategy,
   discoverOAuthServerInfo,
 } from './lib/utils'
@@ -52,6 +53,8 @@ async function runClient(
   serverUrlHash: string,
   authSuccessUrl?: string,
 ) {
+  configureNetworkPolicy(serverUrl, tokenEndpoint)
+
   // Set up event emitter for auth flow
   const events = new EventEmitter()
 
@@ -101,7 +104,7 @@ async function runClient(
     useDeviceCode,
     useClientCredentials,
     tokenEndpoint,
-    fetchFn: createFetchWithInit(fetchWithMcpHeaders, { headers }),
+    fetchFn: createResourceFetch(serverUrl, headers),
     authorizeResource,
     skipResourceParameter,
     authorizeParams,

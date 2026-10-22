@@ -1,3 +1,4 @@
+import { assertAllowedUrl, assertExpectedIssuer, assertAuthorizationMetadata, configuredIssuer, guardedFetch } from './network-policy'
 import { z } from 'zod'
 import {
   OAuthClientInformationFullSchema,
@@ -408,6 +409,7 @@ export class NodeOAuthClientProvider implements OAuthClientProvider {
    */
   async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
     if (this.hasExplicitTokenEndpoint) return
+    if (state.authorizationServerMetadata) assertAuthorizationMetadata(state.authorizationServerMetadata)
     this.flowDiscovery = state
   }
 
@@ -487,6 +489,7 @@ export class NodeOAuthClientProvider implements OAuthClientProvider {
     // Already have metadata? Return it
     debugLog(`authorizationServerMetadata: ${JSON.stringify(this.authorizationServerMetadata)}`)
     if (this.authorizationServerMetadata) {
+      assertAuthorizationMetadata(this.authorizationServerMetadata)
       return this.authorizationServerMetadata
     }
 
@@ -662,15 +665,14 @@ export class NodeOAuthClientProvider implements OAuthClientProvider {
    * @returns The client information or undefined
    */
   async clientInformation(ctx?: OAuthClientInformationContext): Promise<StoredOAuthClientInformation | undefined> {
+    if (ctx) assertExpectedIssuer(ctx.issuer)
     debugLog('Reading client info')
     if (this.staticOAuthClientInfo) {
       debugLog('Returning static client info')
       this._clientInfo = this.staticOAuthClientInfo
       this.clientRegistrationSource = 'static'
       await this.forgetSavedStaticClient()
-      // Vouched for by whoever configured it rather than by an authorization server, so it carries
-      // whichever issuer the SDK resolved. Unstamped, the SDK warns on every sign-in (SEP-2352) and
-      // hands it to saveClientInformation to stamp.
+      // The context was checked against operator configuration before releasing credentials.
       return ctx ? { ...this.staticOAuthClientInfo, issuer: ctx.issuer } : this.staticOAuthClientInfo
     }
 
@@ -790,11 +792,21 @@ export class NodeOAuthClientProvider implements OAuthClientProvider {
    * Gets the OAuth tokens if they exist
    * @returns The OAuth tokens or undefined
    */
-  async tokens(): Promise<OAuthTokens | undefined> {
+  async tokens(ctx?: OAuthClientInformationContext): Promise<OAuthTokens | undefined> {
+    if (ctx) assertExpectedIssuer(ctx.issuer)
     debugLog('Reading OAuth tokens')
     debugLog('Token request stack trace:', new Error().stack)
 
     const tokens = await readJsonFile<OAuthTokensWithExpiresAt>(this.serverUrlHash, 'tokens.json', OAuthTokensWithExpiresAtSchema)
+    if (tokens && configuredIssuer()) {
+      // Never refresh or attach a legacy/foreign token before the SDK gets a chance to check it.
+      if (!tokens.issuer) return undefined
+      try {
+        assertExpectedIssuer(tokens.issuer)
+      } catch {
+        return undefined
+      }
+    }
 
     if (tokens && this.scopeRequestChanged(tokens)) {
       log('The scopes this client asks for have changed since it signed in; signing in again')
@@ -1013,6 +1025,10 @@ export class NodeOAuthClientProvider implements OAuthClientProvider {
       // A sibling may have rotated the token while this instance was reading it, or waiting for
       // the lease, so redeem whatever is on disk now rather than what the caller set out with.
       const stored = await readJsonFile<OAuthTokensWithExpiresAt>(this.serverUrlHash, 'tokens.json', OAuthTokensWithExpiresAtSchema)
+      if (configuredIssuer()) {
+        if (!stored?.issuer) return undefined
+        assertExpectedIssuer(stored.issuer)
+      }
       return await this.doRefreshTokens(stored?.refresh_token ?? refreshToken)
     } finally {
       if (lease !== UNCOORDINATED) await releaseConfigLease(this.serverUrlHash, REFRESH_LEASE_FILE, lease)
@@ -1071,6 +1087,8 @@ export class NodeOAuthClientProvider implements OAuthClientProvider {
       }
 
       const metadata = await this.getAuthorizationServerMetadata()
+      if (configuredIssuer() && !metadata) return undefined
+      if (metadata?.issuer) assertExpectedIssuer(metadata.issuer)
       const authorizationServerUrl =
         (this.protectedResourceMetadata ? getAuthorizationServerUrl(this.protectedResourceMetadata) : undefined) ??
         new URL('/', this.options.serverUrl).toString()
@@ -1094,6 +1112,7 @@ export class NodeOAuthClientProvider implements OAuthClientProvider {
         refreshToken,
         resource,
         addClientAuthentication: this.addClientAuthentication,
+        fetchFn: this.options.fetchFn ?? guardedFetch,
       })
 
       // Goes through saveTokens so the new expiry is persisted the same way
@@ -1184,6 +1203,11 @@ export class NodeOAuthClientProvider implements OAuthClientProvider {
    * is what lets the expiry below be read instead of cast for.
    */
   async saveTokens(tokens: OAuthTokensWithExpiresAt): Promise<void> {
+    const issuer = configuredIssuer()
+    if (issuer) {
+      if (tokens.issuer) assertExpectedIssuer(tokens.issuer)
+      tokens = { ...tokens, issuer }
+    }
     this.guardAgainstTokenStorm()
 
     const timeLeft = tokens.expires_in || 0
@@ -1275,6 +1299,7 @@ export class NodeOAuthClientProvider implements OAuthClientProvider {
     this.applyScope(authorizationUrl)
     this.applyAuthorizeParams(authorizationUrl)
 
+    assertAllowedUrl(authorizationUrl)
     log(`\nPlease authorize this client by visiting:\n${authorizationUrl.toString()}\n`)
 
     debugLog('Redirecting to authorization URL', authorizationUrl.toString())
@@ -1380,7 +1405,7 @@ export class NodeOAuthClientProvider implements OAuthClientProvider {
 
     let response: Response
     try {
-      response = await fetch(authorizationUrl.toString(), {
+      response = await guardedFetch(authorizationUrl.toString(), {
         redirect: 'manual',
         headers: { Accept: 'application/json' },
         signal: AbortSignal.timeout(5_000),

@@ -10,14 +10,14 @@
  */
 
 import { EventEmitter } from 'events'
-import { createFetchWithInit } from '@modelcontextprotocol/client'
+import { configureNetworkPolicy } from './lib/network-policy'
 import type { Transport } from '@modelcontextprotocol/client'
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio'
 import {
   connectToRemoteServer,
   log,
   debugLog,
-  fetchWithMcpHeaders,
+  createResourceFetch,
   mcpProxy,
   parseCommandLineArgs,
   setupSignalHandlers,
@@ -64,6 +64,8 @@ async function runProxy(
   protocolMode: ProtocolMode,
   authSuccessUrl?: string,
 ) {
+  configureNetworkPolicy(serverUrl, tokenEndpoint)
+
   // Set up event emitter for auth flow
   const events = new EventEmitter()
 
@@ -113,7 +115,7 @@ async function runProxy(
     useDeviceCode,
     useClientCredentials,
     tokenEndpoint,
-    fetchFn: createFetchWithInit(fetchWithMcpHeaders, { headers }),
+    fetchFn: createResourceFetch(serverUrl, headers),
     authorizeResource,
     skipResourceParameter,
     authorizeParams,

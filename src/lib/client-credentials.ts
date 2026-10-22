@@ -1,3 +1,4 @@
+import { guardedFetch, assertAuthorizationMetadata } from './network-policy'
 import { OAuthTokensSchema } from '@modelcontextprotocol/core'
 import { selectClientAuthMethod } from '@modelcontextprotocol/client'
 import type { OAuthClientInformationMixed, OAuthTokens } from '@modelcontextprotocol/client'
@@ -29,6 +30,7 @@ export async function authorizeWithClientCredentials({
   scope?: string
   resource?: URL
 }): Promise<OAuthTokens> {
+  assertAuthorizationMetadata(metadata)
   const tokenEndpoint = metadata.token_endpoint
   if (typeof tokenEndpoint !== 'string') {
     throw new Error('The authorization server metadata has no token endpoint')
@@ -66,7 +68,7 @@ export async function authorizeWithClientCredentials({
 
   debugLog('Requesting a token with the client_credentials grant', { tokenEndpoint, authMethod, scope, resource: resource?.href })
 
-  const response = await fetch(tokenEndpoint, { method: 'POST', headers, body: params })
+  const response = await guardedFetch(tokenEndpoint, { method: 'POST', headers, body: params })
 
   if (!response.ok) {
     const body = (await response.json().catch(() => undefined)) as { error?: string; error_description?: string } | undefined

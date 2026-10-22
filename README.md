@@ -1,4 +1,57 @@
-# `mcp-remote`
+# `mcp-remote-alibaba-cloud`
+
+This package is an Alibaba Cloud fork of [`mcp-remote`](https://github.com/punkpeye/mcp-remote).
+The current source incorporates upstream main at `373f7320f6afd1fdb00e0168826a3cea99102241`
+(after upstream v0.15.2), with additional security restrictions and MCP SDK 2.3.1.
+
+## Security and remote connections
+
+Prefer your client's native remote MCP connection when available. Use this local bridge only
+for a client that requires stdio, and connect only to servers and authorization services you trust.
+Published version 0.1.38 contains code covered by five upstream CVE records; see
+[the fork advisory](security/advisories/oauth-trust-boundaries.md) and [security policy](SECURITY.md).
+The fixes here are prepared for 0.1.39; they do not update an existing npm installation until published.
+
+The bridge now allows network requests only to the configured MCP origin and explicitly trusted
+OAuth origins. If the authorization server differs from the MCP server, configure its **exact issuer**
+in `MCP_REMOTE_AUTH_ISSUER`. Obtain that value from the service operator using a trusted channel.
+Do not copy a destination from an unexpected server challenge to silence an error.
+
+```json
+{
+  "mcpServers": {
+    "trusted-service": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote-alibaba-cloud@0.1.39", "https://mcp.example.com/mcp"],
+      "env": {
+        "MCP_REMOTE_AUTH_ISSUER": "https://auth.example.com/tenant",
+        "MCP_REMOTE_TRUSTED_ORIGINS": "https://metadata.example.com"
+      }
+    }
+  }
+}
+```
+
+`MCP_REMOTE_TRUSTED_ORIGINS` is an optional comma-separated list of exact origins (scheme, host,
+and optional port), without paths or wildcards. These origins may receive OAuth credentials;
+keep the list minimal. The MCP origin alone does not become an OAuth credential destination
+when you configure a separate issuer. Without an issuer setting, the MCP origin is the default
+issuer; `--token-endpoint` explicitly selects the token service origin for machine credentials.
+HTTPS is required for discovered cross-origin services. HTTP remains available only for the
+explicitly selected MCP origin, subject to the existing CLI `--allow-http` rules.
+
+Discovery and direct grant requests do not follow redirects. SDK transports permit only their
+default same-origin redirects. Hosts requiring discovery redirects must configure their final
+endpoint instead. Browser launch URLs pass the same origin checks; navigation after the browser
+opens is controlled by the browser and the trusted authorization service.
+
+Credential cache names now use SHA-256 and include the configured issuer. Old MD5 cache files
+are not migrated or reused: expect to sign in again and a different derived callback port.
+For a pre-registered redirect URI, pass the callback port explicitly.
+The store remains readable plaintext protected by file permissions; keep it private and do not
+share `~/.mcp-auth` or debug logs.
+
+## Upstream usage reference
 
 Connect an MCP Client that only supports local (stdio) servers to a Remote MCP Server, with auth support:
 
@@ -22,7 +75,7 @@ All the most popular MCP clients (Claude Desktop, Cursor & Windsurf) use the fol
     "remote-example": {
       "command": "npx",
       "args": [
-        "mcp-remote",
+        "mcp-remote-alibaba-cloud",
         "https://remote.mcp.server/sse"
       ]
     }
@@ -40,7 +93,7 @@ To bypass authentication, or to emit custom headers on all requests to your remo
     "remote-example": {
       "command": "npx",
       "args": [
-        "mcp-remote",
+        "mcp-remote-alibaba-cloud",
         "https://remote.mcp.server/sse",
         "--header",
         "Authorization: Bearer ${AUTH_TOKEN}"
@@ -59,7 +112,7 @@ To bypass authentication, or to emit custom headers on all requests to your remo
 {
   // rest of config...
   "args": [
-    "mcp-remote",
+    "mcp-remote-alibaba-cloud",
     "https://remote.mcp.server/sse",
     "--header",
     "Authorization:${AUTH_HEADER}" // note no spaces around ':'
@@ -74,7 +127,7 @@ To keep a credential out of the process arguments — where any other user on th
 
 ```json
       "args": [
-        "mcp-remote",
+        "mcp-remote-alibaba-cloud",
         "https://remote.mcp.server/sse",
         "--header-file",
         "/path/to/headers.txt"
@@ -99,7 +152,7 @@ To run multiple instances of the same remote server with different configuration
     "atlassian_tenant1": {
       "command": "npx",
       "args": [
-        "mcp-remote",
+        "mcp-remote-alibaba-cloud",
         "https://mcp.atlassian.com/v1/sse",
         "--resource",
         "https://tenant1.atlassian.net/"
@@ -108,7 +161,7 @@ To run multiple instances of the same remote server with different configuration
     "atlassian_tenant2": {
       "command": "npx",
       "args": [
-        "mcp-remote",
+        "mcp-remote-alibaba-cloud",
         "https://mcp.atlassian.com/v1/sse",
         "--resource",
         "https://tenant2.atlassian.net/"
@@ -130,7 +183,7 @@ Some authorization servers require parameters of their own on the authorize call
 
 ```json
       "args": [
-        "mcp-remote",
+        "mcp-remote-alibaba-cloud",
         "https://remote.mcp.server/mcp",
         "--authorize-param",
         "access_type=offline",
@@ -160,7 +213,7 @@ Some authorization servers reject the resource parameter outright — Microsoft 
     "entra-example": {
       "command": "npx",
       "args": [
-        "mcp-remote",
+        "mcp-remote-alibaba-cloud",
         "https://remote.mcp.server/mcp",
         "--disable-resource-parameter"
       ]
@@ -177,7 +230,7 @@ Some authorization servers reject the resource parameter outright — Microsoft 
       "command": "npx",
       "args": [
         "-y",
-        "mcp-remote",
+        "mcp-remote-alibaba-cloud",
         "https://remote.mcp.server/sse"
       ]
 ```
@@ -186,7 +239,7 @@ Some authorization servers reject the resource parameter outright — Microsoft 
 
 ```json
       "args": [
-        "mcp-remote@latest",
+        "mcp-remote-alibaba-cloud@latest",
         "https://remote.mcp.server/sse"
       ]
 ```
@@ -195,7 +248,7 @@ Some authorization servers reject the resource parameter outright — Microsoft 
 
 ```json
       "args": [
-        "mcp-remote",
+        "mcp-remote-alibaba-cloud",
         "https://remote.mcp.server/sse",
         "9696"
       ]
@@ -205,7 +258,7 @@ Some authorization servers reject the resource parameter outright — Microsoft 
 
 ```json
       "args": [
-        "mcp-remote",
+        "mcp-remote-alibaba-cloud",
         "https://remote.mcp.server/sse",
         "--host",
         "127.0.0.1"
@@ -216,7 +269,7 @@ Some authorization servers reject the resource parameter outright — Microsoft 
 
 ```json
       "args": [
-        "mcp-remote",
+        "mcp-remote-alibaba-cloud",
         "https://remote.mcp.server/sse",
         "--callback-path",
         "/custom/callback"
@@ -227,7 +280,7 @@ Some authorization servers reject the resource parameter outright — Microsoft 
 
 ```json
       "args": [
-        "mcp-remote",
+        "mcp-remote-alibaba-cloud",
         "https://remote.mcp.server/sse",
         "--auth-success-url",
         "https://app.example.com/cli-connected"
@@ -240,7 +293,7 @@ Some authorization servers reject the resource parameter outright — Microsoft 
 
 ```json
       "args": [
-        "mcp-remote",
+        "mcp-remote-alibaba-cloud",
         "http://internal-service.vpc/sse",
         "--allow-http"
       ]
@@ -250,7 +303,7 @@ Some authorization servers reject the resource parameter outright — Microsoft 
 
 ```json
       "args": [
-        "mcp-remote",
+        "mcp-remote-alibaba-cloud",
         "https://remote.mcp.server/sse",
         "--debug"
       ]
@@ -260,7 +313,7 @@ Some authorization servers reject the resource parameter outright — Microsoft 
 
 ```json
       "args": [
-        "mcp-remote",
+        "mcp-remote-alibaba-cloud",
         "https://remote.mcp.server/sse",
         "--silent"
       ]
@@ -270,7 +323,7 @@ Some authorization servers reject the resource parameter outright — Microsoft 
 
 ```json
     "args": [
-      "mcp-remote",
+      "mcp-remote-alibaba-cloud",
       "https://remote.mcp.server/sse",
       "--enable-proxy"
     ],
@@ -284,7 +337,7 @@ Some authorization servers reject the resource parameter outright — Microsoft 
 
 ```json
       "args": [
-        "mcp-remote",
+        "mcp-remote-alibaba-cloud",
         "https://remote.mcp.server/sse",
         "--ignore-tool",
         "delete*",
@@ -302,7 +355,7 @@ You can specify multiple `--ignore-tool` flags to ignore different patterns. Exa
 
 ```json
       "args": [
-        "mcp-remote",
+        "mcp-remote-alibaba-cloud",
         "https://remote.mcp.server/sse",
         "--auth-timeout",
         "60"
@@ -317,7 +370,7 @@ You can specify multiple `--ignore-tool` flags to ignore different patterns. Exa
 
 ```json
       "args": [
-        "mcp-remote",
+        "mcp-remote-alibaba-cloud",
         "https://remote.mcp.server/sse",
         "--connect-timeout",
         "30",
@@ -332,7 +385,7 @@ You can specify multiple `--ignore-tool` flags to ignore different patterns. Exa
 
 ```json
       "args": [
-        "mcp-remote",
+        "mcp-remote-alibaba-cloud",
         "https://remote.mcp.server/sse",
         "--keep-alive",
         "--ping-interval",
@@ -344,7 +397,7 @@ You can specify multiple `--ignore-tool` flags to ignore different patterns. Exa
 
 ```json
       "args": [
-        "mcp-remote",
+        "mcp-remote-alibaba-cloud",
         "https://remote.mcp.server/sse",
         "--ipv4"
       ]
@@ -357,7 +410,7 @@ MCP Remote supports different transport strategies when connecting to an MCP ser
 Specify the transport strategy with the `--transport` flag:
 
 ```bash
-npx mcp-remote https://example.remote/server --transport sse-only
+npx mcp-remote-alibaba-cloud https://example.remote/server --transport sse-only
 ```
 
 **Available Strategies:**
@@ -379,7 +432,7 @@ has no way to fall forward. The fix it names is a *dual-era client*, which is wh
 becomes with `--protocol auto`:
 
 ```bash
-npx mcp-remote https://example.remote/mcp --protocol auto
+npx mcp-remote-alibaba-cloud https://example.remote/mcp --protocol auto
 ```
 
 **Available modes:**
@@ -427,9 +480,9 @@ This is useful when connecting to OAuth servers that expect specific client/soft
 Provide the client metadata as a JSON string or as a `@` prefixed filepath with the `--static-oauth-client-metadata` flag:
 
 ```bash
-npx mcp-remote https://example.remote/server --static-oauth-client-metadata '{ "scope": "space separated scopes" }'
+npx mcp-remote-alibaba-cloud https://example.remote/server --static-oauth-client-metadata '{ "scope": "space separated scopes" }'
 # uses node readfile, so you probably want to use absolute paths if you're not sure what the cwd is
-npx mcp-remote https://example.remote/server --static-oauth-client-metadata '@/Users/username/Library/Application Support/Claude/oauth_client_metadata.json'
+npx mcp-remote-alibaba-cloud https://example.remote/server --static-oauth-client-metadata '@/Users/username/Library/Application Support/Claude/oauth_client_metadata.json'
 ```
 
 What you provide is merged over the defaults, so this is also how you pin a value mcp-remote would
@@ -439,7 +492,7 @@ otherwise negotiate. `token_endpoint_auth_method` is picked from the authorizati
 else:
 
 ```bash
-npx mcp-remote https://example.remote/server --static-oauth-client-metadata '{ "token_endpoint_auth_method": "client_secret_post" }'
+npx mcp-remote-alibaba-cloud https://example.remote/server --static-oauth-client-metadata '{ "token_endpoint_auth_method": "client_secret_post" }'
 ```
 
 ### Static OAuth Client Information
@@ -455,9 +508,9 @@ Provide the client metadata as a JSON string or as a `@` prefixed filepath with 
 ```bash
 export MCP_REMOTE_CLIENT_ID=xxx
 export MCP_REMOTE_CLIENT_SECRET=yyy
-npx mcp-remote https://example.remote/server --static-oauth-client-info "{ \"client_id\": \"$MCP_REMOTE_CLIENT_ID\", \"client_secret\": \"$MCP_REMOTE_CLIENT_SECRET\" }"
+npx mcp-remote-alibaba-cloud https://example.remote/server --static-oauth-client-info "{ \"client_id\": \"$MCP_REMOTE_CLIENT_ID\", \"client_secret\": \"$MCP_REMOTE_CLIENT_SECRET\" }"
 # uses node readfile, so you probably want to use absolute paths if you're not sure what the cwd is
-npx mcp-remote https://example.remote/server --static-oauth-client-info '@/Users/username/Library/Application Support/Claude/oauth_client_info.json'
+npx mcp-remote-alibaba-cloud https://example.remote/server --static-oauth-client-info '@/Users/username/Library/Application Support/Claude/oauth_client_info.json'
 ```
 
 ### Client ID Metadata Documents
@@ -471,7 +524,7 @@ dynamic registration is needed.
 Point mcp-remote at your document with `--client-metadata-url`:
 
 ```bash
-npx mcp-remote https://example.remote/server --client-metadata-url https://client.example.com/.well-known/oauth-client-metadata
+npx mcp-remote-alibaba-cloud https://example.remote/server --client-metadata-url https://client.example.com/.well-known/oauth-client-metadata
 ```
 
 The URL must use HTTPS and have a path — a bare origin is rejected. If the server does not advertise
@@ -484,7 +537,7 @@ the `redirect_uris` in your document stay correct. Run once to see the port it p
 yourself:
 
 ```bash
-npx mcp-remote https://example.remote/server 3334 --client-metadata-url https://client.example.com/.well-known/oauth-client-metadata
+npx mcp-remote-alibaba-cloud https://example.remote/server 3334 --client-metadata-url https://client.example.com/.well-known/oauth-client-metadata
 ```
 
 ### Signing In Without a User
@@ -496,7 +549,7 @@ scheduled job, say, where there is no user to consent and no browser to consent 
 client presents its own credentials and is issued a token for itself.
 
 ```bash
-npx mcp-remote https://example.remote/mcp \
+npx mcp-remote-alibaba-cloud https://example.remote/mcp \
   --client-credentials \
   --static-oauth-client-info '{"client_id":"my-client","client_secret":"${MCP_CLIENT_SECRET}"}'
 ```
@@ -514,7 +567,7 @@ If an internal server does not publish RFC 9728 or RFC 8414/OIDC discovery metad
 token endpoint explicitly. This skips discovery and is accepted only with `--client-credentials`:
 
 ```bash
-npx mcp-remote https://example.remote/mcp \
+npx mcp-remote-alibaba-cloud https://example.remote/mcp \
   --client-credentials \
   --token-endpoint https://auth.example.com/oauth/token \
   --static-oauth-client-info '{"client_id":"my-client","client_secret":"${MCP_CLIENT_SECRET}"}' \
@@ -536,7 +589,7 @@ cron job, an SSH session or a container does not have. If your authorization ser
 moves the browser to whatever machine you are actually sitting at:
 
 ```bash
-npx mcp-remote https://example.remote/server --device-code
+npx mcp-remote-alibaba-cloud https://example.remote/server --device-code
 ```
 
 mcp-remote prints a short code and a URL, then polls until you approve it:
@@ -578,7 +631,7 @@ A `Cookie` you pass yourself with `--header` always wins.
 To turn it off:
 
 ```bash
-npx mcp-remote https://example.remote/server --disable-cookies
+npx mcp-remote-alibaba-cloud https://example.remote/server --disable-cookies
 ```
 
 ### Using the ID Token as the Bearer Credential
@@ -591,7 +644,7 @@ Bedrock AgentCore works this way, and rejects the access token outright.
 Pass `--use-id-token` to send the ID token instead:
 
 ```bash
-npx mcp-remote https://example.remote/server --use-id-token
+npx mcp-remote-alibaba-cloud https://example.remote/server --use-id-token
 ```
 
 Only the credential presented to the MCP server changes — the refresh token and the renewal flow
@@ -602,7 +655,7 @@ An ID token is only issued when `openid` is among the requested scopes. If your 
 advertise it, ask for it explicitly:
 
 ```bash
-npx mcp-remote https://example.remote/server --use-id-token --static-oauth-client-metadata '{ "scope": "openid email" }'
+npx mcp-remote-alibaba-cloud https://example.remote/server --use-id-token --static-oauth-client-metadata '{ "scope": "openid email" }'
 ```
 
 ### Claude Desktop
@@ -687,7 +740,7 @@ this might look like:
     "remote-example": {
       "command": "npx",
       "args": [
-        "mcp-remote",
+        "mcp-remote-alibaba-cloud",
         "https://remote.mcp.server/sse"
       ],
       "env": {
@@ -713,7 +766,7 @@ For troubleshooting complex issues, especially with token refreshing or authenti
 
 ```json
 "args": [
-  "mcp-remote",
+  "mcp-remote-alibaba-cloud",
   "https://remote.mcp.server/sse",
   "--debug"
 ]

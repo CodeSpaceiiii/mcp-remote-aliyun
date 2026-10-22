@@ -1,3 +1,4 @@
+import { guardedFetch } from './network-policy'
 import { debugLog } from './utils'
 
 /**
@@ -130,7 +131,7 @@ async function fetchProtectedResourceMetadataFromUrl(metadataUrl: string): Promi
   debugLog('Fetching Protected Resource Metadata', { metadataUrl })
 
   try {
-    const response = await fetch(metadataUrl, {
+    const response = await guardedFetch(metadataUrl, {
       headers: {
         Accept: 'application/json',
         'Accept-Encoding': 'identity',

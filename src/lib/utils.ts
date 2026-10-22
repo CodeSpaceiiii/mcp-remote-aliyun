@@ -1,3 +1,4 @@
+import { assertAllowedUrl, assertResourceOrigin, guardedFetch } from './network-policy'
 import { OAuthClientInformationFullSchema } from '@modelcontextprotocol/core'
 import {
   Client,
@@ -174,10 +175,25 @@ export const fetchWithMcpHeaders = (async (url: string | URL, init?: RequestInit
     request = { ...init, headers }
   }
 
-  const response = await fetch(url, request)
+  assertAllowedUrl(url)
+  const response = await fetch(url, { ...request, redirect: 'manual' })
   captureCookies(url, response)
   return response.ok ? response : asGlobalResponse(response)
 }) as unknown as FetchLike
+
+/** Do not forward operator-supplied MCP headers into cross-origin OAuth discovery or grants. */
+export function createResourceFetch(serverUrl: string, resourceHeaders: Record<string, string>): FetchLike {
+  const origin = new URL(serverUrl).origin
+  return async (url, init) => {
+    if (new URL(url).origin === origin) return fetchWithMcpHeaders(url, init)
+    const headers = new globalThis.Headers(init?.headers)
+    for (const [name, value] of Object.entries(resourceHeaders)) {
+      // Keep OAuth's own client authentication when it replaced an identically named MCP header.
+      if (headers.get(name) === value.trim()) headers.delete(name)
+    }
+    return fetchWithMcpHeaders(url, { ...init, headers })
+  }
+}
 
 /** Statuses the `Response` constructor refuses a body for, per the fetch spec's null body statuses. */
 const NULL_BODY_STATUSES = new Set([101, 103, 204, 205, 304])
@@ -1900,7 +1916,7 @@ export async function discoverOAuthServerInfo(
   // Step 1: Probe the MCP server to get WWW-Authenticate header
   try {
     debugLog('Probing MCP server for WWW-Authenticate header')
-    const response = await fetch(serverUrl, {
+    const response = await guardedFetch(serverUrl, {
       method: 'GET',
       headers: {
         ...headers,
@@ -2103,6 +2119,7 @@ export async function connectToRemoteServer(
 ): Promise<Transport> {
   log(`[${pid}] Connecting to remote server: ${serverUrl}`)
   const url = new URL(serverUrl)
+  const resourceFetch = createResourceFetch(serverUrl, headers)
 
   // Every attempt the EventSource makes to open the stream comes through the `fetch` below,
   // including the ones it makes on its own after the connection drops. Counting them is how a
@@ -2112,11 +2129,14 @@ export async function connectToRemoteServer(
   // Create transport with eventSourceInit to pass Authorization header if present
   const eventSourceInit = {
     fetch: (requestUrl: string | URL, init?: RequestInit) => {
+      assertResourceOrigin(requestUrl, serverUrl)
+      assertAllowedUrl(requestUrl)
       return Promise.resolve(authProvider?.tokens?.())
         .then((tokens) => {
           const cookie = cookieHeaderFor(requestUrl)
           return fetch(requestUrl, {
             ...init,
+            redirect: 'manual',
             headers: mergeHeaders(
               init?.headers,
               // The stream is usually where a balancer plants its cookie, and always where it
@@ -2155,12 +2175,12 @@ export async function connectToRemoteServer(
         authProvider,
         requestInit: { headers },
         eventSourceInit,
-        fetch: fetchWithMcpHeaders,
+        fetch: resourceFetch,
       })
     : new StreamableHTTPClientTransport(url, {
         authProvider,
         requestInit: { headers },
-        fetch: fetchWithMcpHeaders,
+        fetch: resourceFetch,
       })
 
   // When connecting without a Client (proxy mode), the auth challenge (401) is not received by
@@ -2194,7 +2214,7 @@ export async function connectToRemoteServer(
         const testTransport = new StreamableHTTPClientTransport(url, {
           authProvider,
           requestInit: { headers },
-          fetch: fetchWithMcpHeaders,
+          fetch: resourceFetch,
         })
         // This transport is the one that will receive (and store the metadata from) any 401 challenge.
         authChallengeTransport = testTransport
@@ -3290,7 +3310,7 @@ export function setupSignalHandlers(cleanup: () => Promise<void>) {
  * @param authorizeParams Optional extra authorization parameters
  * @param clientMetadataUrl Optional Client ID Metadata Document URL used as the client_id
  * @param tokenEndpoint Optional explicit token endpoint used by the client_credentials grant
- * @returns MD5 hash of the configuration
+ * @returns SHA-256 hash of an unambiguously serialized configuration
  */
 export function getServerUrlHash(
   serverUrl: string,
@@ -3300,29 +3320,18 @@ export function getServerUrlHash(
   clientMetadataUrl?: string,
   tokenEndpoint?: string,
 ): string {
-  // Include resource and headers in hash to isolate OAuth sessions
-  // per unique server configuration (fixes #25)
-  const parts = [serverUrl]
-  if (authorizeResource) parts.push(authorizeResource)
-  // Authorize params belong here for the same reason: `audience` decides which API the token is
-  // for, and `access_type` decides whether a refresh token comes back at all. Reusing one set of
-  // credentials across two of those is how you get a token that silently does not work.
-  if (authorizeParams && Object.keys(authorizeParams).length > 0) {
-    const sorted = Object.keys(authorizeParams).sort()
-    parts.push(JSON.stringify(authorizeParams, sorted))
+  // Field tags keep a URL containing separators from aliasing a resource or another option.
+  const sortedEntries = (value?: Record<string, string>) => Object.entries(value ?? {}).sort(([a], [b]) => a.localeCompare(b))
+  const config = {
+    serverUrl,
+    authorizeResource: authorizeResource || undefined,
+    authorizeParams: sortedEntries(authorizeParams),
+    headers: sortedEntries(headers),
+    clientMetadataUrl,
+    tokenEndpoint,
+    issuer: process.env.MCP_REMOTE_AUTH_ISSUER,
   }
-  if (headers && Object.keys(headers).length > 0) {
-    const sortedKeys = Object.keys(headers).sort()
-    parts.push(JSON.stringify(headers, sortedKeys))
-  }
-  // And so does the client id, when it comes from a metadata document rather than a registration.
-  // A refresh token is bound to the client that obtained it, so tokens from a dynamic registration
-  // cannot be refreshed once this client starts identifying itself by a URL instead.
-  if (clientMetadataUrl) parts.push(clientMetadataUrl)
-  // Client credentials and tokens are bound to the authorization server that issued them. A
-  // changed endpoint must never inherit a token cached for the same MCP resource server.
-  if (tokenEndpoint) parts.push(tokenEndpoint)
-  return crypto.createHash('md5').update(parts.join('|')).digest('hex')
+  return crypto.createHash('sha256').update(JSON.stringify(config)).digest('hex')
 }
 
 /**

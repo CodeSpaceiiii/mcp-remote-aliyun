@@ -1,3 +1,4 @@
+import { guardedFetch, assertAuthorizationMetadata } from './network-policy'
 import { OAuthTokensSchema } from '@modelcontextprotocol/core'
 import { selectClientAuthMethod } from '@modelcontextprotocol/client'
 import type { OAuthClientInformationMixed, OAuthTokens } from '@modelcontextprotocol/client'
@@ -67,6 +68,7 @@ export async function authorizeWithDeviceCode({
   scope,
   resource,
 }: DeviceAuthorizationRequest): Promise<OAuthTokens> {
+  assertAuthorizationMetadata(metadata)
   const deviceAuthorizationEndpoint = metadata.device_authorization_endpoint
   if (typeof deviceAuthorizationEndpoint !== 'string') {
     throw new Error('The authorization server does not offer a device authorization endpoint')
@@ -121,7 +123,7 @@ async function requestDeviceAuthorization(
 
   debugLog('Requesting device authorization', { endpoint, scope: options.scope })
 
-  const response = await fetch(endpoint, { method: 'POST', headers, body: params })
+  const response = await guardedFetch(endpoint, { method: 'POST', headers, body: params })
   if (!response.ok) {
     throw new Error(`Device authorization request failed (HTTP ${response.status}): ${await errorDetail(response)}`)
   }
@@ -161,7 +163,7 @@ async function pollForTokens(
     applyClientAuthentication(options.authMethod, options.clientInformation, headers, params)
     if (options.resource) params.set('resource', options.resource.href)
 
-    const response = await fetch(tokenEndpoint, { method: 'POST', headers, body: params })
+    const response = await guardedFetch(tokenEndpoint, { method: 'POST', headers, body: params })
     if (response.ok) {
       log('Authorized.')
       return OAuthTokensSchema.parse(await response.json())

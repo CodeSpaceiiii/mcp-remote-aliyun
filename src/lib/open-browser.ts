@@ -1,3 +1,4 @@
+import { assertAllowedUrl } from './network-policy'
 import { spawn, type ChildProcess } from 'child_process'
 import open from 'open'
 import { log, debugLog } from './utils'
@@ -56,6 +57,7 @@ function launched(child: ChildProcess, name: string): Promise<boolean> {
  * @returns True if one of the helpers launched something
  */
 export async function openBrowser(url: string): Promise<boolean> {
+  assertAllowedUrl(url)
   debugLog('Browser launch environment', {
     DISPLAY: process.env.DISPLAY,
     WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY,
