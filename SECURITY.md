@@ -11,7 +11,10 @@ release or a published GitHub Security Advisory.
 Prefer native remote MCP support. Otherwise connect only to trusted MCP servers, explicitly
 configure the expected authorization issuer, and keep additional trusted origins minimal.
 The operator-configured destinations, their DNS and TLS, the operating system browser opener,
-and any configured network proxy remain trusted. The origin policy prevents discovery from
+and any configured network proxy remain trusted. Fixed presets for the exact official Hangzhou
+and Singapore OpenAPI MCP tenant URLs add their known OAuth origins when no explicit issuer or
+token endpoint is configured; see the README for
+the matching rules and overrides. The origin policy prevents discovery from
 adding new destinations; it is not a DNS/IP sandbox for explicitly trusted domains.
 
 OAuth cache files contain sensitive tokens in plaintext. The upstream owner-only permissions

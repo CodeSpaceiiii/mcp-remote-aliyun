@@ -1,8 +1,18 @@
 /**
  * The CLI handles one MCP server per process. Only operator configuration may extend its
- * network authority; discovery documents and redirects never add trusted origins.
+ * network authority, including fixed presets for known services; discovery and redirects never add trusted origins.
  */
-let policy: { serverOrigin: string; origins: Set<string>; credentialOrigins: Set<string>; issuer: string } | undefined
+import { getOpenApiMcpPreset } from './openapi-mcp-preset'
+
+let policy:
+  | {
+      serverOrigin: string
+      origins: Set<string>
+      credentialOrigins: Set<string>
+      issuer: string
+      issuerSource: 'environment' | 'token-endpoint-origin' | 'server-origin' | 'openapi-mcp-preset'
+    }
+  | undefined
 
 function parseUrl(value: string | URL): URL {
   const url = new URL(value)
@@ -14,20 +24,30 @@ function parseUrl(value: string | URL): URL {
 
 export function configureNetworkPolicy(serverUrl: string, tokenEndpoint?: string): void {
   const server = parseUrl(serverUrl)
-  const expectedIssuer = process.env.MCP_REMOTE_AUTH_ISSUER || (tokenEndpoint ? parseUrl(tokenEndpoint).origin : server.origin)
+  const preset = getOpenApiMcpPreset(serverUrl, tokenEndpoint)
+  const expectedIssuer =
+    process.env.MCP_REMOTE_AUTH_ISSUER || preset?.issuer || (tokenEndpoint ? parseUrl(tokenEndpoint).origin : server.origin)
+  const issuerSource = process.env.MCP_REMOTE_AUTH_ISSUER
+    ? 'environment'
+    : preset
+      ? 'openapi-mcp-preset'
+      : tokenEndpoint
+        ? 'token-endpoint-origin'
+        : 'server-origin'
   const issuer = parseUrl(expectedIssuer)
   if (issuer.search) throw new Error('MCP_REMOTE_AUTH_ISSUER must be an issuer URL without a query')
   const origins = new Set([server.origin, issuer.origin])
   const credentialOrigins = new Set([issuer.origin])
   // Exact origins only. No wildcard/suffix matching, and no paths that conceal a configuration error.
-  for (const value of (process.env.MCP_REMOTE_TRUSTED_ORIGINS || '').split(',').filter(Boolean)) {
+  const trustedOrigins = process.env.MCP_REMOTE_TRUSTED_ORIGINS ?? preset?.trustedOrigins.join(',') ?? ''
+  for (const value of trustedOrigins.split(',').filter(Boolean)) {
     const url = parseUrl(value.trim())
     if (url.pathname !== '/' || url.search) throw new Error('MCP_REMOTE_TRUSTED_ORIGINS must contain exact origins')
     origins.add(url.origin)
     credentialOrigins.add(url.origin)
   }
   if (tokenEndpoint) origins.add(parseUrl(tokenEndpoint).origin)
-  policy = { serverOrigin: server.origin, origins, credentialOrigins, issuer: expectedIssuer }
+  policy = { serverOrigin: server.origin, origins, credentialOrigins, issuer: expectedIssuer, issuerSource }
 }
 
 export function assertAllowedUrl(value: string | URL): void {
@@ -45,7 +65,24 @@ export function assertAllowedUrl(value: string | URL): void {
 export function assertExpectedIssuer(issuer: string): void {
   assertAllowedUrl(issuer)
   if (policy && issuer.replace(/\/$/, '') !== policy.issuer.replace(/\/$/, '')) {
-    throw new Error('OAuth issuer differs from MCP_REMOTE_AUTH_ISSUER; refusing to release credentials')
+    const source =
+      policy.issuerSource === 'environment'
+        ? 'Expected issuer source: MCP_REMOTE_AUTH_ISSUER (explicit configuration).'
+        : policy.issuerSource === 'openapi-mcp-preset'
+          ? 'Expected issuer source: built-in Alibaba Cloud OpenAPI MCP preset (full tenant URL).'
+          : policy.issuerSource === 'token-endpoint-origin'
+            ? 'Expected issuer source: --token-endpoint origin (default); MCP_REMOTE_AUTH_ISSUER is not set.'
+            : 'Expected issuer source: MCP server origin (default); MCP_REMOTE_AUTH_ISSUER is not set.'
+    // Do not echo issuer URLs: their paths can contain private tenant identifiers.
+    throw new Error(
+      [
+        'OAuth issuer differs from the expected issuer; refusing to release credentials.',
+        source,
+        'This service may use a path-scoped or separate authorization issuer.',
+        'Set MCP_REMOTE_AUTH_ISSUER to the exact issuer confirmed by the service operator, including any path.',
+        'Do not copy an unexpected discovered issuer merely to silence this error.',
+      ].join('\n'),
+    )
   }
 }
 
