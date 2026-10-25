@@ -84,3 +84,23 @@ scanners match the fork. Do not infer affected ranges for other fork versions fr
 Sources: [research advisories and corrections](https://github.com/playb0t/mcp-remote-oauth-security),
 [SDK advisory](https://github.com/modelcontextprotocol/typescript-sdk/security/advisories/GHSA-6qxp-vccf-f47h),
 [upstream source](https://github.com/punkpeye/mcp-remote/tree/373f7320f6afd1fdb00e0168826a3cea99102241).
+
+## Follow-up compatibility change (2026-10-25, prepared for 0.1.40)
+
+A fixed service preset now supplies the full tenant URL as issuer and the known site-specific
+OAuth origins for exact HTTPS OpenAPI MCP origins in Hangzhou and Singapore with the
+`/id/<TENANT_ID>/mcp` path. Explicit issuer or token endpoint configuration disables the preset;
+an explicit trusted-origin list replaces its additional OAuth origins. Other URLs retain the
+previous rules. Discovery and redirects still cannot expand authority. The README documents
+these built-in defaults, which supersede the original all-explicit configuration guidance above.
+The cache hash includes the preset issuer, matching an explicitly configured identical issuer.
+Legacy MD5 caches are still not migrated.
+
+The earlier validation section describes the original assessment. Follow-up validation used
+operator-authorized Hangzhou and Singapore tenant endpoints. Both completed zero-configuration
+OAuth, MCP initialization and tools/list (15 tools each), then reconnected from the temporary
+cache without another browser authorization. Explicitly configuring the same issuer and site-specific
+OAuth origins reused that cache successfully. The Singapore account initially rejected initialization
+with HTTP 403 because public access was disabled; the operator enabled access before the successful
+retest. No cloud resource operation tools were invoked. Temporary credential caches were removed.
+No tenant identifiers or credentials are included in this advisory.

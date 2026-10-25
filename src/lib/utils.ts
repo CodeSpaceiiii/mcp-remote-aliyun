@@ -1,4 +1,5 @@
 import { assertAllowedUrl, assertResourceOrigin, guardedFetch } from './network-policy'
+import { getOpenApiMcpPreset } from './openapi-mcp-preset'
 import { OAuthClientInformationFullSchema } from '@modelcontextprotocol/core'
 import {
   Client,
@@ -3329,7 +3330,8 @@ export function getServerUrlHash(
     headers: sortedEntries(headers),
     clientMetadataUrl,
     tokenEndpoint,
-    issuer: process.env.MCP_REMOTE_AUTH_ISSUER,
+    issuer:
+      process.env.MCP_REMOTE_AUTH_ISSUER || getOpenApiMcpPreset(serverUrl, tokenEndpoint)?.issuer || process.env.MCP_REMOTE_AUTH_ISSUER,
   }
   return crypto.createHash('sha256').update(JSON.stringify(config)).digest('hex')
 }
